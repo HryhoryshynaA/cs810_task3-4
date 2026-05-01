@@ -338,3 +338,16 @@
      - Public Key: (8192 bit) - публічний ключ із мого server.key
      - І також алгоритм підпису
 
+
+
+## Завдання 7
+1. Виконла пошук домену на сайті 
+2. Відсортувала за колонкою "Not before", перший рядок і є найстрашим сертифікатом
+3. Про сертифікат
+    - Id: 1140488506
+    - Serial number: 03:45:12:1a:33:e1:bb:23:95:9b:4d:e2:82:05:6f:71:df:75
+    - Дата видачі: Jan 24 12:33:42 2019 GMT
+    - Дата закінчення: Apr 24 12:33:42 2019 GMT
+    - Сommon name: cep.kse.ua
+    - Issuer: commonName = Let's Encrypt Authority X3, organizationName = Let's Encrypt, countryName = US
+
