@@ -348,6 +348,131 @@
 
 
 
+## Завдання 2
+
+Потрібно було знайти префікс довжиною 20 байтів до повідомлення:
+
+```
+give my friend 2 bitcoins for a pizza
+```
+
+Я використала префікс формату `cs810-task2-` + 8 байтів лічильника та перебрала лічильник за допомогою оптимізованого C# скрипта `tools/task2-prefix-search`.
+
+Знайдений префікс:
+
+```
+hex: 63733831302d7461736b322d000000002c3fb5a2
+escaped: cs810-task2-\x00\x00\x00\x00,?\xb5\xa2
+```
+
+Перевірка:
+
+```
+SHA-256(prefix || message) =
+00000000c3d55e06969f514e5f939e1cdc0f6beb1ab1cb88a073025edb64d5da
+```
+
+Перші 32 біти дорівнюють нулю, бо digest починається з `00000000`. Для відтворення перевірки:
+
+```powershell
+python task_2.py
+```
+
+## Завдання 4
+
+Для підпису нашого CSR ключем іншої команди потрібно передати іншій команді лише файл:
+
+```
+keys_task3/server.csr
+```
+
+Приватний ключ `keys_task3/server.key` передавати не можна, бо він дає змогу підписувати дані від нашого імені. Файл `D:\Downloads\key.pub` є тільки публічним ключем, тому ним неможливо підписати сертифікат.
+
+Команда, яку має виконати інша команда зі своїм приватним ключем:
+
+```powershell
+& "C:\Program Files\Git\mingw64\bin\openssl.exe" x509 -req -sha256 `
+  -in keys_task3\server.csr `
+  -signkey other_team_private.key `
+  -out task4_signed_by_other_team.crt
+```
+
+Після отримання сертифіката його можна переглянути:
+
+```powershell
+& "C:\Program Files\Git\mingw64\bin\openssl.exe" x509 -text -noout -in task4_signed_by_other_team.crt
+```
+
+Окреме пояснення та команди винесені у файл `task_4.md`.
+
+## Завдання 5
+
+Повідомлення збережене у файлі `task_message.bin` без символу нового рядка. Його SHA-256:
+
+```
+4941a019ff6dae9c05ce621111b74576be6a4eb4669ed0096ea28c3de63c5cc7
+```
+
+Для "textbook RSA" я підписала безпосередньо значення SHA-256 як число: digest було доповнено нулями зліва до розміру RSA-модуля 8192 біти, після чого виконано raw RSA private operation. Результат:
+
+```
+task5_textbook.sig
+task5_textbook.sig.b64
+```
+
+Перевірка raw RSA підпису: після застосування public operation до `task5_textbook.sig` відновлюється файл `task5_hash_padded_8192.bin`, тобто в кінці отриманого блоку лежить SHA-256 digest повідомлення.
+
+RSA-PSS підпис створений через OpenSSL з SHA-256 та salt length 32:
+
+```
+task5_pss.sig
+task5_pss.sig.b64
+```
+
+Перевірка PSS:
+
+```
+Verified OK
+```
+
+Чому textbook RSA вразливий: він детермінований і не має безпечного форматування повідомлення перед піднесенням до степеня. Через мультиплікативну структуру RSA та відсутність рандомізації така схема не забезпечує сучасної безпеки підпису. RSA-PSS додає випадкову сіль і спеціальне кодування, тому однакове повідомлення може мати різні валідні підписи, а схема має формальне обґрунтування безпеки в моделі RSA.
+
+Для відтворення:
+
+```powershell
+.\task_5_6.ps1
+```
+
+## Завдання 6
+
+Повідомлення:
+
+```
+give my friend 2 bitcoins for a pizza
+```
+
+зашифроване публічним ключем з `task6_key.pub` за схемою RSA-OAEP з SHA-256:
+
+```
+task6_ciphertext.bin
+task6_ciphertext.bin.b64
+```
+
+Використання OAEP важливе, бо "textbook RSA" шифрування є детермінованим і не приховує структуру повідомлень належним чином. OAEP додає рандомізоване безпечне доповнення перед RSA-операцією.
+
+Команда з `task_5_6.ps1`:
+
+```powershell
+& "C:\Program Files\Git\mingw64\bin\openssl.exe" pkeyutl -encrypt `
+  -pubin `
+  -inkey task6_key.pub `
+  -in task_message.bin `
+  -out task6_ciphertext.bin `
+  -pkeyopt rsa_padding_mode:oaep `
+  -pkeyopt rsa_oaep_md:sha256 `
+  -pkeyopt rsa_mgf1_md:sha256
+```
+
 ## Завдання 7
 1. Виконла пошук домену на сайті 
 2. Відсортувала за колонкою "Not before", перший рядок і є найстрашим сертифікатом
@@ -386,6 +511,6 @@
 ## Внесок учасників групи
 | Імʼя студента        | Завдання            |
 |----------------------|---------------------|
-| Denys Kucheruk       |                     | 
+| Denys Kucheruk       | 2, 4, 5, 6 завдання | 
 | Adriana Hryhoryshyna | 1, 3, 7, 8 завдання |
       
