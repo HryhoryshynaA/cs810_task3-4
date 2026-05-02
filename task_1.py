@@ -140,4 +140,5 @@ def run_tests():
     if all_passed:
         print("All tests passed")
 
-run_tests()
+if __name__ == "__main__":
+    run_tests()

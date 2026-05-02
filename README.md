@@ -1,7 +1,9 @@
 # ПРАКТИЧНЕ ЗАВДАННЯ #3-4
 
 ## Завдання 1
+
 Алгоритм хешування
+
 1. Доповнення повідомлення: написала функцію pad(), яка додає до вхідного масиву байтів одиничний біт (0x80), необхідну кількість нульових байтів та 64-бітне представлення оригінальної довжини повідомлення у Big-Endian. Це гарантує, що повідомлення оброблятиметься рівними блоками по 512 біт
 2. У головному циклі кожен 512-бітний блок розбивається на шістнадцять 32-бітних слів, які потім розширюються до 64 слів за допомогою допоміжних функцій sigma0 і sigma1
 3. Цикл стиснення. У кожній ітерації 64 раундів використовуються допоміжні функції Ch, Maj, Sigma0, Sigma1 та константи K для оновлення восьми 32-бітних змінних, які в кінці кожного блоку додаються до початкових значень H0-H7
@@ -9,6 +11,204 @@
 
 Тестування
 - Я використала тестові вектори для перевірки правильності реалізації. **Всі тести пройшли успішно**
+
+## Завдання 2
+
+Потрібно було знайти префікс довжиною 20 байтів до повідомлення:
+
+```
+give my friend 2 bitcoins for a pizza
+```
+
+Такий, щоб SHA-256(prefix || message) починався з 32 нульових бітів (00000000 у HEX).
+
+### Крок 1: Структура префіксу
+
+**Формат:** `cs810-task2-` + 8 байтів лічильника
+
+- **Частина 1:** `"cs810-task2-"` - константна ASCII стрічка (12 байтів)
+- **Частина 2:** `counter` - 64-бітне число у Big-Endian форматі (8 байтів)
+- **Разом:** 20 байтів
+
+**Приклад для counter = 0x2c3fb5a2:**
+```
+Hex:     63733831302d7461736b322d 000000002c3fb5a2
+ASCII:   c  s  8  1  0  -  t  a  s  k  2  -    [8 байтів лічильника]
+```
+
+### Крок 2: Алгоритм пошуку
+
+**Логіка:**
+1. Для кожного counter = 0, 1, 2, ..., 2^64-1
+2. Сформувати префікс = "cs810-task2-" || counter_bytes
+3. Обчислити SHA-256(префікс || повідомлення)
+4. Якщо перші 32 біти = 0x00000000 → знайдено!
+
+**Складність:** У середньому потрібно 2^32 спроб (4 мільярди), бо шукаємо ймовірність 1/2^32 для кожного хешу.
+
+### Крок 3: C# програма для пошуку
+
+**Файл:** `tools/task2-prefix-search/Program.cs`
+
+#### Структура програми:
+
+**1. SHA-256 реалізація (оптимізована):**
+```csharp
+private static readonly uint[] K = [ 0x428a2f98, 0x71374491, ... ]  // 64 K константи
+private static readonly uint[] H0 = [ 0x6a09e667, 0xbb67ae85, ... ]  // 8 H констант
+
+// Функції для SHA-256:
+private static uint RotR(uint x, int n) => (x >> n) | (x << (32 - n))
+private static uint Ch(uint x, uint y, uint z) => (x & y) ^ (~x & z)
+private static uint Maj(uint x, uint y, uint z) => (x & y) ^ (x & z) ^ (y & z)
+
+// Сигма функції для розширення та компресії
+private static uint Big0(uint x) => RotR(x, 2) ^ RotR(x, 13) ^ RotR(x, 22)
+private static uint Big1(uint x) => RotR(x, 6) ^ RotR(x, 11) ^ RotR(x, 25)
+private static uint Small0(uint x) => RotR(x, 7) ^ RotR(x, 18) ^ (x >> 3)
+private static uint Small1(uint x) => RotR(x, 17) ^ RotR(x, 19) ^ (x >> 10)
+```
+
+**2. Паралельна обробка:**
+```csharp
+Parallel.For(0, threads, threadId =>
+{
+    for (var counter = (ulong)threadId; /* умова */; counter += (ulong)threads)
+    {
+        if (FinalFirstWord(counter, block0, block1) == 0)  // Перші 32 біти = 0?
+        {
+            foundCounter = counter;
+            break;  // Знайдено!
+        }
+    }
+});
+```
+
+**Параметри:**
+- `threads`: кількість потоків (за замовчуванням = CPU cores)
+- Кожен потік обробляє contador % threads == threadId
+- Прогрес виводиться кожні 5 секунд: `X hashes, Y H/s`
+
+**3. Формування префіксу:**
+```csharp
+private static byte[] BuildPrefix(ulong counter)
+{
+    var prefix = new byte[20];
+    Encoding.ASCII.GetBytes("cs810-task2-".AsSpan(), prefix);  // Перші 12 байтів
+    
+    // Останні 8 байтів - лічильник у Big-Endian
+    for (var i = 0; i < 8; i++)
+        prefix[12 + i] = (byte)(counter >> (56 - 8 * i));
+    
+    return prefix;  // 20 байтів
+}
+```
+
+### Крок 4: Компіляція та запуск
+
+```powershell
+# Перейти до директорії проекту
+cd tools\task2-prefix-search
+
+# Компілювання Release версії (оптимізовано для швидкості)
+dotnet build -c Release
+
+# Запуск з помилкою STDOUT
+dotnet run --configuration Release --no-build
+```
+
+**Вихід программи:**
+```
+[Кожні 5 сек:]
+X hashes, Y H/s
+
+[Після знаходження:]
+counter=754939298
+prefix_hex=63733831302d7461736b322d000000002c3fb5a2
+prefix_ascii_head=cs810-task2-
+```
+
+### Крок 5: Верифікація результату (Python)
+
+**Файл:** `task_2.py`
+
+```python
+from task_1 import sha256
+
+MESSAGE = b"give my friend 2 bitcoins for a pizza"
+PREFIX = bytes.fromhex("63733831302d7461736b322d000000002c3fb5a2")
+
+def main():
+    # Конкатенувати префікс та повідомлення
+    data = PREFIX + MESSAGE
+    
+    # Обчислити SHA-256 (використовуємо власну реалізацію з task_1.py)
+    digest = sha256(data)
+    
+    # Вивести результати
+    print(f"Prefix (hex): {PREFIX.hex()}")
+    print(f"Message: {MESSAGE.decode('ascii')}")
+    print(f"SHA-256(prefix || message): {digest}")
+    
+    # Перевірити перші 32 біти (8 HEX цифр)
+    first_8_chars = digest[:8]
+    print(f"\nFirst 32 bits: {first_8_chars}")
+    
+    if first_8_chars == "00000000":
+        print("✓ PASSED - перші 32 біти = нулі")
+    else:
+        print("✗ FAILED - перші 32 біти не нулі")
+
+if __name__ == "__main__":
+    main()
+```
+
+**Запуск верифікації:**
+
+```powershell
+python task_2.py
+```
+
+**Очікуваний результат:**
+```
+Prefix (hex): 63733831302d7461736b322d000000002c3fb5a2
+Message: give my friend 2 bitcoins for a pizza
+SHA-256(prefix || message): 00000000c3d55e06969f514e5f939e1cdc0f6beb1ab1cb88a073025edb64d5da
+
+First 32 bits: 00000000
+✓ PASSED - перші 32 біти = нулі
+```
+
+### Знайдений префікс
+
+```
+Hex:          63733831302d7461736b322d000000002c3fb5a2
+Decimal counter: 754939298 (0x2c3fb5a2)
+ASCII head:   cs810-task2-
+```
+
+**SHA-256 хеш:**
+```
+00000000c3d55e06969f514e5f939e1cdc0f6beb1ab1cb88a073025edb64d5da
+└─────┘
+32 нульові біти ✓
+```
+
+### Оптимізаційні техніки C#
+
+1. **SHA-256 оптимізація у памяті:**
+   - `MakeBlock0`: підготувати перший блок один раз (не пересчитувати для кожної ітерації)
+   - `FinalFirstWord`: обчислити тільки перші 32 біти результату (достатньо для перевірки)
+
+2. **Паралелізм:**
+   - `Parallel.For` з динамічним розподілом потоків
+   - Синхронізація через `Volatile` читання/запису та `Interlocked` операції
+   - Кожен потік обробляє свій діапазон: counter, counter + threads, counter + 2*threads, ...
+
+3. **Швидкість:**
+   - Release конфігурація включає JIT оптимізації
+   - Усічення на першому нульовому слові (швидше, ніж хешування весь вихід)
+
 ## Завдання 3
 
 1. Генерація пари ключів RSA
@@ -348,8 +548,357 @@
 
 
 
+1. Генерація пари ключів RSA
+    - Запускаю команду в терміналі:
+    ```
+    openssl genpkey -algorithm RSA -out server.key -pkeyopt rsa_keygen_bits:8192
+   ```
+    - Результатом є створення приватного ключа `server.key`
+2. Створення запиту на сертифікат (CSR)
+    - Використовую команду:
+    ```
+    openssl req -new -key server.key -out server.csr \
+      -subj "/C=UA/L=Kyiv/O=KSE/CN=www.crypto.kse.ua/emailAddress=user@kse.org.ua" \
+      -nodes
+    ```
+   - Це створює на основі приватного ключа файл `server.csr`, який містить запит до CA
+3. Перевірка вмісту CSR
+    - Використовую команду:
+    ```
+    openssl req -text -noout -verify -in server.csr
+    ```
+   - Результат показує, що CSR містить публічний ключ розміром 8192 біти, Subject з усією необхідною інформацією та підпис
+   - З важливого: Subject містить інфо про організацію, країну, місто та інше, які будуть включені в сертифікат. Public Key Info показує алгоритм та розмір ключа. Signature Algorithm показує алгоритм підпису, який використовується для підпису CSR.
+4. Створення самопідписного сертифіката
+    - Використовую команду:
+    ```
+    openssl x509 -req -sha256 -in server.csr -signkey server.key -out server.crt
+    ```
+   - Резульат:
+    ```
+    Certificate request self-signature ok
+    subject=C=UA, L=Kyiv, O=KSE, CN=www.crypto.kse.ua, emailAddress=user@kse.org.ua
+    ```
+   - замість того щоб відправляти CSR до зовнішнього CA, я підписую його тим самим приватним ключем. Результат файл server.crt
+5. Дослідження вмісту сертифікату
+   Використовую команду:
+   ```
+   openssl x509 -text -noout -in server.crt
+   ```
+   - Отримана інформація про сертифікат включає:
+     - Version: 3 (X.509v3 сертифікат)
+     - Serial Number: унікальний ідентифікатор
+     - Signature Algorithm: sha256WithRSAEncryption
+     - Issuer та Subject: однакові, бо це самопідписний сертифікат
+     - Validity period: не раніше та не пізніше певної дати
+     - Public Key: 8192-бітний публічний ключ
+     - X509v3 extensions з Subject Key Identifier
+
+## Завдання 4
+
+Потрібно було підписати створений публічний ключ, використовуючи запит на формування сертифіката, ключем іншої команди.
+
+### Крок 1: Генерація приватного ключа та CSR
+
+Раніше я створив:
+1. **Приватний ключ** `keys_task3/server.key` (8192 бітів, RSA)
+2. **Запит на сертифікат** `keys_task3/server.csr` (містить публічний ключ + метадані)
+
+### Крок 2: Визначення що передавати іншій команді
+
+**БЕЗПЕЧНО передавати:**
+
+```
+keys_task3/server.csr
+```
+
+Файл `server.csr` містить:
+- Публічний ключ (8192 біти)
+- Subject інформацію (C=UA, L=Kyiv, O=KSE, CN=www.crypto.kse.ua, emailAddress=user@kse.org.ua)
+- Версію та алгоритм (RSA, SHA-256)
+- Підпис самого CSR-а
+
+**НЕБЕЗПЕЧНО передавати:**
+
+```
+keys_task3/server.key
+```
+
+Файл `server.key` містить:
+- Приватний ключ (дозволяє підписувати дані)
+- Якщо передати цей файл, інша команда зможе підписувати від мого імені!
+
+### Крок 3: Передача іншій команді
+
+Не було передано server.csr
+
+## Завдання 5
+
+Я підписав повідомлення «give my friend 2 bitcoins for a pizza» за допомогою RSA приватного ключа двома методами: textbook RSA та RSA-PSS.
+
+### Крок 1: Підготовка повідомлення
+
+```powershell
+$message = "give my friend 2 bitcoins for a pizza"
+$messagePath = "task_message.bin"
+[System.IO.File]::WriteAllBytes($messagePath, [System.Text.Encoding]::ASCII.GetBytes($message))
+```
+
+Результат: файл `task_message.bin` з ASCII кодуванням повідомлення (38 байтів).
+
+### Крок 2: Обчислення SHA-256 хешу
+
+```powershell
+$openssl = "C:\Program Files\Git\mingw64\bin\openssl.exe"
+$hashPath = "task5_hash.bin"
+
+& $openssl dgst -sha256 -binary -out $hashPath $messagePath
+```
+
+**Деталі команди:**
+- `dgst -sha256`: обчислити SHA-256 хеш
+- `-binary`: вивести як двійковий файл (не HEX)
+- `-out $hashPath`: зберегти в файл
+
+Результат:
+```
+task5_hash.bin (32 байти - розмір SHA-256)
+```
+
+SHA-256 значення (HEX):
+```
+4941a019ff6dae9c05ce621111b74576be6a4eb4669ed0096ea28c3de63c5cc7
+```
+
+### Крок 3.1: Textbook RSA підпис
+
+**Концепція:** RSA-модуль має розмір 8192 біти = 1024 байти. Для підпису потрібно:
+
+1. Взяти хеш (32 байти)
+2. Доповнити його нулями до розміру модуля (30 нулів + 32 байти хешу = 1024 байти)
+3. Інтерпретувати як число
+4. Застосувати RSA операцію: sig = hash^d mod n
+
+**Реалізація:**
+
+```powershell
+# Крок 1: Прочитати хеш (32 байти)
+$hashData = [System.IO.File]::ReadAllBytes($hashPath)
+
+# Крок 2: Доповнити нулями до розміру модуля (1024 байти)
+$paddedHash = New-Object byte[] 1024
+[Array]::Copy($hashData, 0, $paddedHash, 1024 - 32, 32)
+
+# Крок 3: Записати доповнений хеш у файл
+[System.IO.File]::WriteAllBytes("task5_hash_padded_8192.bin", $paddedHash)
+
+# Крок 4: Виконати raw RSA підпис
+$privateKey = "keys_task3\server.key"
+$textbookInput = "task5_hash_padded_8192.bin"
+$textbookSignature = "task5_textbook.sig"
+
+& $openssl rsautl -sign -raw `
+  -inkey $privateKey `
+  -in $textbookInput `
+  -out $textbookSignature
+```
+
+**Параметри OpenSSL:**
+- `rsautl -sign`: підписувати
+- `-raw`: виконувати raw RSA операцію (без додатку PKCS#1 v1.5)
+- `-inkey $privateKey`: приватний ключ для підпису
+
+**Результат:**
+```
+task5_textbook.sig (1024 байти - розмір модуля)
+task5_textbook.sig.b64 (Base64-кодований)
+```
+
+### Крок 3.2: Textbook RSA верифікація
+
+```powershell
+$textbookRecovered = "task5_textbook_recovered.bin"
+
+& $openssl rsautl -verify -raw `
+  -pubin `
+  -inkey "keys_task3\server.pub" `
+  -in $textbookSignature `
+  -out $textbookRecovered
+```
+
+**Параметри OpenSSL:**
+- `rsautl -verify`: верифікувати (застосувати public operation)
+- `-raw`: raw операція
+- `-pubin`: вхідний ключ у форматі публічного ключа
+
+**Результат верифікації:**
+- Файл `task5_textbook_recovered.bin` містить 1024 байти
+- Останні 32 байти - це SHA-256 хеш оригінального повідомлення ✓
+
+### Крок 4: RSA-PSS підпис
+
+**Концепція:** PSS (Probabilistic Signature Scheme) додає рандомізацію для безпеки:
+
+1. Генерується випадкова сіль (salt) довжиною 32 байти
+2. Сіль та хеш комбінуються з використанням MGF1
+3. Результат підписується RSA операцією
+
+```powershell
+$pssSignature = "task5_pss.sig"
+
+& $openssl dgst -sha256 `
+  -sign $privateKey `
+  -sigopt rsa_padding_mode:pss `
+  -sigopt rsa_pss_saltlen:32 `
+  -out $pssSignature `
+  $messagePath
+```
+
+**Параметри OpenSSL:**
+- `dgst -sha256 -sign`: підписувати хеш повідомлення
+- `-sigopt rsa_padding_mode:pss`: використовувати PSS схему
+- `-sigopt rsa_pss_saltlen:32`: довжина сольі (32 байти)
+
+**Результат:**
+```
+task5_pss.sig (1024 байти)
+task5_pss.sig.b64 (Base64-кодований)
+```
+
+### Крок 5: RSA-PSS верифікація
+
+```powershell
+& $openssl dgst -sha256 `
+  -verify "keys_task3\server.pub" `
+  -signature $pssSignature `
+  -sigopt rsa_padding_mode:pss `
+  -sigopt rsa_pss_saltlen:32 `
+  $messagePath
+```
+
+### Порівняння методів
+
+| Властивість | Textbook RSA | RSA-PSS |
+|-------------|-------------|---------|
+| **Детермінованість** | Так (один) | Ні (випадковий) |
+| **Рандомізація** | Немає | Є (salt) |
+| **Безпека** | Слабка | Сильна (стандарт) |
+| **Атаки** | Уразливий до forge | Стійкий |
+| **Стандартизація** | Не рекомендується | PKCS #1 v2.1 ✓ |
+
+### Команда для запуску всіх операцій
+
+```powershell
+.\task_5_6.ps1
+```
+
+Скрипт виконає:
+1. Запис повідомлення
+2. SHA-256 хешування
+3. Textbook RSA підпис
+4. Textbook RSA верифікація
+5. RSA-PSS підпис
+6. RSA-PSS верифікація
+7. Base64 кодування всіх файлів
+
+## Завдання 6
+
+Я зашифрував повідомлення «give my friend 2 bitcoins for a pizza» публічним ключем зі схемою RSA-OAEP з SHA-256.
+
+### Крок 1: Підготовка ключа та повідомлення
+
+**Використовуємо файли з завдання 5:**
+```powershell
+$messagePath = "task_message.bin"      # 38 байтів (ASCII)
+$encryptionKey = "task6_key.pub"       # Публічний ключ (8192 біти)
+$ciphertext = "task6_ciphertext.bin"   # Вихідний зашифрований текст
+```
+
+### Крок 2: Шифрування RSA-OAEP
+
+```powershell
+$openssl = "C:\Program Files\Git\mingw64\bin\openssl.exe"
+
+& $openssl pkeyutl -encrypt `
+  -pubin `
+  -inkey $encryptionKey `
+  -in $messagePath `
+  -out $ciphertext `
+  -pkeyopt rsa_padding_mode:oaep `
+  -pkeyopt rsa_oaep_md:sha256 `
+  -pkeyopt rsa_mgf1_md:sha256
+```
+
+**Параметри OpenSSL:**
+
+| Параметр | Значення | Пояснення |
+|----------|----------|----------|
+| `pkeyutl -encrypt` | - | Публічна ключова операція - шифрування |
+| `-pubin` | - | Ключ у форматі публічного ключа |
+| `-inkey $key` | `task6_key.pub` | Публічний ключ для шифрування |
+| `-in $plaintext` | `task_message.bin` | Відкритий текст (38 байтів) |
+| `-out $ciphertext` | `task6_ciphertext.bin` | Шифротекст (1024 байти) |
+| `-pkeyopt rsa_padding_mode:oaep` | `oaep` | Режим заповнення - OAEP |
+| `-pkeyopt rsa_oaep_md:sha256` | `sha256` | Хеш-функція для OAEP |
+| `-pkeyopt rsa_mgf1_md:sha256` | `sha256` | Хеш-функція для MGF1 (Mask Generation Function) |
+
+### Крок 3: Результати
+
+**Файли:**
+```
+task6_ciphertext.bin (1024 байти)    # Двійковий шифротекст
+task6_ciphertext.bin.b64             # Base64-кодований
+```
+
+**Розмір шифротексту:** 1024 байти (розмір RSA модуля 8192 біти)
+
+### OAEP (Optimal Asymmetric Encryption Padding) - Деталі
+
+#### Чому OAEP важливо
+
+**Textbook RSA (НЕБЕЗПЕЧНО):**
+```
+c = m^e mod n
+```
+- Детермінований: один повідомлення = один шифротекст
+- Можливо розпізнати повторення
+- Уразливий до атак з обраним шифротекстом
+
+**OAEP (БЕЗПЕЧНО):**
+```
+1. Генерувати випадкову сіль r (розмір k - 2hLen, де hLen = 32 для SHA-256)
+2. Обчислити MGF1: X = m || 0^(k-hLen-1) ⊕ MGF1(r)
+3. Обчислити Y = r ⊕ MGF1(X)
+4. Обчислити c = (X || Y)^e mod n
+```
+
+#### Переваги OAEP
+
+| Властивість | Textbook | OAEP |
+|-------------|---------|------|
+| **Рандомізація** | Нема | Є (випадкова r) |
+| **Семантична безпека** | Немає | Так (IND-CPA) |
+| **Детермінованість** | Так | Ні |
+| **Повторення** | Видно | Не видно |
+| **MGF1 масквування** | Немає | Є (X та Y) |
+
+#### Процес шифрування в OpenSSL
+
+1. **Генерація сольі:** 190 байтів випадкових даних (1024 - 64 - 32 - 1)
+2. **MGF1-SHA256:** Маскування з SHA-256
+3. **OAEP буфер:** X (190 байтів) || Y (190 байтів) || хеш (32 байти)
+4. **RSA операція:** buffer^e mod n
+
+### Команда для запуску
+
+```powershell
+.\task_5_6.ps1
+```
+
+Всі операції шифрування та кодування Base64 виконуються автоматично.
+
 ## Завдання 7
-1. Виконла пошук домену на сайті 
+1. Виконала пошук домену на сайті 
 2. Відсортувала за колонкою "Not before", перший рядок і є найстрашим сертифікатом
 ![kse_sorted_by_date_certificates.png](screenshots/kse_sorted_by_date_certificates.png)
 3. Про сертифікат
@@ -380,12 +929,9 @@
 ## Ресурси
 - https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf
 - https://linux.die.net/man/1/x509
-- 
-
 
 ## Внесок учасників групи
 | Імʼя студента        | Завдання            |
 |----------------------|---------------------|
-| Denys Kucheruk       |                     | 
+| Denys Kucheruk       | 2, 4, 5, 6 завдання | 
 | Adriana Hryhoryshyna | 1, 3, 7, 8 завдання |
-      
